@@ -1,4 +1,4 @@
-# WGAN-GP Face Generator
+# FaceWGAN-GP
 
 A from-scratch PyTorch implementation of a Wasserstein GAN with Gradient Penalty that learns to generate 128x128 human faces from noise.
 
