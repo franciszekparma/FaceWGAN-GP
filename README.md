@@ -1,4 +1,4 @@
-# FaceWGAN-GP
+# WGAN-GP Face Generator
 
 A from-scratch PyTorch implementation of a Wasserstein GAN with Gradient Penalty that learns to generate 128x128 human faces from noise.
 
@@ -91,7 +91,7 @@ score = discriminator(x_hat)
 grads = torch.autograd.grad(outputs=score, inputs=x_hat, ...)
 norm = grads.view(B, -1).norm(2, dim=1)
 
-GP = lambda * ((norm - 1) ** 2).mean()                # penalize deviation from 1
+GP = lambda_ * ((norm - 1) ** 2).mean()                # penalize deviation from 1
 ```
 
 ### Training Loop
@@ -157,6 +157,8 @@ python code/train.py
 
 Checkpoints save every 5 epochs. The best model (lowest validation Wasserstein distance) is saved to `checkpoints/best_model.pth`. To resume from a checkpoint, set `LOAD_STATE = True` in `code/utils.py`.
 
+This repo only includes the best model checkpoint. If you want the full checkpoint history (epoch 0, 5, 10, ..., 85), reach out at **parma.franek@gmail.com**.
+
 ### Generate faces
 
 ```bash
@@ -201,13 +203,27 @@ Everything lives in [`code/utils.py`](code/utils.py).
 | DropBlock (prob, size) | (0.1, 2) |
 | MLP dropout | 0.1 / 0.2 (first layer) |
 
+**Hardware:** Trained on an NVIDIA RTX 5090 rented from RunPod.
+
 ---
 
-## Hardware
+## Limitations
 
-Trained on an rented H100.
-* Total time: 14h
-* Money spend: 45$  
+- **128x128 only** — no progressive growing, resolution is fixed at architecture level
+- **Unconditional** — no control over generated attributes
+- **No FID metric** — quality tracked only via Wasserstein distance
+- **3x critic overhead** — three forward/backward passes per generator step
+- **No truncation trick** — can't trade diversity for quality at inference time
+
+---
+
+## Future Work
+
+- Progressive growing or patch-based discriminator for higher resolutions
+- FID and IS metrics for proper quality evaluation
+- Exponential moving average of generator weights for smoother outputs
+- Conditional generation via class labels or CLIP embeddings
+- Spectral normalization as a lighter alternative to gradient penalty
 
 ---
 
