@@ -1,0 +1,36 @@
+# Model checkpoints
+checkpoints/
+
+# Dataset
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE and editor history
+.history/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Experiment tracking
+wandb/
+runs/
+*.log
