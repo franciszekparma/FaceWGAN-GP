@@ -1,6 +1,6 @@
 # WGAN-GP Face Generator
 
-A Wasserstein GAN with Gradient Penalty for generating 128x128 face images.
+A from-scratch PyTorch implementation of a Wasserstein GAN with Gradient Penalty that learns to generate 128x128 human faces from noise.
 
 <p align="center">
   <img src="samples/sample_1.png" width="128" />
@@ -10,49 +10,109 @@ A Wasserstein GAN with Gradient Penalty for generating 128x128 face images.
   <img src="samples/sample_5.png" width="128" />
 </p>
 
-## Architecture
+<p align="center"><i>Selected outputs from the trained generator. Each image is synthesized from a random 128-d latent vector.</i></p>
 
-### Generator
+---
 
-The generator maps a 128-dimensional latent vector to a 128x128 RGB image through a series of transposed convolution layers with residual blocks.
+## Why WGAN-GP?
 
-`latent z (128,) -> reshape (128, 1, 1) -> ConvTranspose2d blocks -> tanh -> image (3, 128, 128)`
+Vanilla GANs minimize the Jensen-Shannon divergence between real and generated distributions. When those distributions have little overlap (which is almost always the case in high-dimensional image space), JS divergence saturates and the generator receives near-zero gradients. Training stalls.
 
-- **Transposed convolutions** (`ConvTranspose2d` with `kernel_size=2, stride=2`) progressively upsample spatial dimensions. Each layer doubles the resolution while a learned kernel controls how information is distributed across the new pixels.
-- **BatchNorm + GELU** after each transposed convolution (except the final layer). BatchNorm is safe here because the gradient penalty only involves the discriminator — the generator never participates in the GP computation.
-- **Residual blocks** (`layer_repeat=5`): Each upsampling stage is followed by 5 residual blocks (`Conv2d(3x3, stride=1, pad=1) -> BatchNorm -> GELU` with a skip connection). This allows deeper per-resolution feature processing without vanishing gradients.
-- **`tanh` output** squashes pixel values to [-1, 1], matching the normalized training data.
+The **Wasserstein distance** (Earth Mover's Distance) doesn't have this problem — it provides a smooth, meaningful gradient signal even when distributions are far apart. But computing it requires the critic to be **1-Lipschitz**, which the original WGAN enforced via crude weight clipping.
 
-### Discriminator (Critic)
-
-The discriminator scores images with a raw scalar (the Wasserstein distance estimate) — there is no sigmoid, because the WGAN objective directly optimizes `E[D(real)] - E[D(fake)]` rather than binary cross-entropy.
-
-`image (3, 128, 128) -> Conv2d blocks -> Flatten -> MLP -> scalar score`
-
-- **Strided convolutions instead of MaxPool**: MaxPool has sparse, non-informative gradients — only the max element in each pooling window receives gradient; all others get zero. This would degrade the gradient penalty signal, which requires well-behaved gradients flowing back through the entire discriminator. Strided convolutions (`Conv2d(..., stride=2)`) learn the downsampling and provide smooth, informative gradients throughout.
-- **InstanceNorm (not BatchNorm)**: BatchNorm computes statistics across the mini-batch, introducing inter-sample dependencies. This conflicts with the gradient penalty, which is fundamentally a per-sample constraint (the gradient norm of each interpolated sample should be ~1). InstanceNorm normalizes each sample independently (`affine=True` for learnable scale/shift), preserving correct per-sample gradient computation.
-- **DropBlock2D** (`drop_prob=0.1, block_size=2`): Structured spatial dropout that drops contiguous 2x2 regions of feature maps rather than individual pixels. Standard dropout is less effective for convolutions because neighboring activations carry correlated information — dropping a single pixel is easily reconstructed from its neighbors. DropBlock forces the network to learn more spatially distributed representations.
-- **GELU activations**: Smoother than ReLU/LeakyReLU with non-zero gradients everywhere, which benefits the gradient penalty computation.
-- **Residual blocks** (`layer_repeat_conv=4`): 4 residual blocks per conv stage for deeper feature extraction.
-- **MLP head**: After flattening, a 4-layer MLP with Dropout progressively reduces to a single scalar output. No activation on the final layer — the output is a raw Wasserstein score.
-
-### Gradient Penalty
-
-The gradient penalty replaces weight clipping from the original WGAN, which suffered from capacity underuse (weights pushed to clip boundaries) and exploding/vanishing gradients.
-
-For each training step, interpolated samples are constructed between real and fake images:
+**Gradient Penalty** replaces weight clipping with a soft constraint: sample points along straight lines between real and fake images, and penalize the critic whenever its gradient norm deviates from 1. This gives stable training without crippling the critic's capacity.
 
 ```
-x_hat = alpha * x_real + (1 - alpha) * x_fake,  alpha ~ U(0, 1)
+Standard GAN loss:     min_G max_D  E[log D(x)] + E[log(1 - D(G(z)))]
+                       ↑ saturates when D is confident
+
+WGAN-GP loss:          min_G max_D  E[D(x)] - E[D(G(z))] - λ·E[(‖∇D(x̂)‖₂ - 1)²]
+                       ↑ linear in D's output → always provides gradient
 ```
 
-The penalty enforces the 1-Lipschitz constraint on the critic:
+---
+
+## How It Works
+
+### The Generator
+
+Takes a 128-dimensional noise vector and progressively upsamples it into a 128x128 RGB image.
+
+Each upsampling stage doubles the spatial resolution via `ConvTranspose2d(kernel=2, stride=2)`, followed by **5 residual blocks** that refine details at that resolution before moving on. BatchNorm is used freely here since the gradient penalty only constrains the critic.
 
 ```
-GP = lambda * E[(||grad_x D(x_hat)||_2 - 1)^2],  lambda = 10
+z ∈ R^128  →  reshape to (128, 1, 1)
+
+    ↓  ConvTranspose2d + BN + GELU + 5×ResBlock     1×1   → 2×2
+    ↓  ConvTranspose2d + BN + GELU + 5×ResBlock     2×2   → 4×4
+    ↓  ConvTranspose2d + BN + GELU + 5×ResBlock     4×4   → 8×8
+    ↓  ConvTranspose2d + BN + GELU + 5×ResBlock     8×8   → 16×16
+    ↓  ConvTranspose2d + BN + GELU + 5×ResBlock     16×16 → 32×32
+    ↓  ConvTranspose2d + BN + GELU                  32×32 → 64×64
+    ↓  ConvTranspose2d → tanh                       64×64 → 128×128
+
+Output: image ∈ [-1, 1]^(3×128×128)
 ```
 
-This encourages the gradient norm to be exactly 1 everywhere along the interpolation path, ensuring the critic is smooth and provides useful learning signal to the generator.
+### The Critic
+
+Scores an image with a single unbounded scalar — higher means "more real." There is no sigmoid because the Wasserstein objective needs the output to be an unconstrained real number, not a probability.
+
+The critic has several design choices driven specifically by the gradient penalty:
+
+**InstanceNorm instead of BatchNorm.** The GP computes `∂D(x̂)/∂x̂` per-sample. BatchNorm couples samples through shared batch statistics, corrupting these per-sample gradients. InstanceNorm normalizes over spatial dimensions only, keeping each sample independent.
+
+**Strided convolutions instead of MaxPool.** MaxPool passes gradients only through the max element in each window — everyone else gets zero. This creates sparse, uninformative gradients that degrade the GP signal. Learned strided convolutions provide dense, smooth gradients throughout.
+
+**DropBlock2D instead of standard Dropout.** In convolutional layers, neighboring activations are highly correlated. Dropping individual pixels does almost nothing because neighbors reconstruct the missing values. DropBlock drops contiguous 2x2 spatial regions, forcing genuinely distributed representations.
+
+```
+image (3, 128, 128)
+    ↓  Conv2d(s=2) + IN + GELU + DropBlock + 4×ResBlock     → (64,  64, 64)
+    ↓  Conv2d(s=2) + IN + GELU + DropBlock + 4×ResBlock     → (128, 32, 32)
+    ↓  Conv2d(s=2) + IN + GELU + DropBlock + 4×ResBlock     → (256, 16, 16)
+    ↓  Conv2d(s=1) + 3×ResBlock (no skip, downsample)       → (512,  2,  2)
+    ↓  Flatten                                               → (2048,)
+    ↓  Linear + GELU + Dropout(0.2)
+    ↓  Linear + GELU + Dropout(0.1)
+    ↓  Linear + GELU + Dropout(0.1)
+    ↓  Linear → scalar
+```
+
+### The Gradient Penalty
+
+For each training step, interpolated samples are constructed between real and fake images, and the critic's gradient norm on those samples is penalized toward 1:
+
+```python
+alpha = torch.rand((B, 1, 1, 1), device=device)
+x_hat = alpha * x_real + (1 - alpha) * x_fake          # interpolate
+
+score = discriminator(x_hat)
+grads = torch.autograd.grad(outputs=score, inputs=x_hat, ...)
+norm = grads.view(B, -1).norm(2, dim=1)
+
+GP = lambda_ * ((norm - 1) ** 2).mean()                # penalize deviation from 1
+```
+
+### Training Loop
+
+The critic trains **3 steps** for every generator step. It needs to be a good Wasserstein distance estimator before the generator can get a useful learning signal from it.
+
+```
+for each batch of real images:
+    repeat 3 times:
+        generate fakes
+        D_loss = E[D(fake)] - E[D(real)] + GP(real, fake)
+        update critic
+
+    generate fakes
+    G_loss = -E[D(fake)]
+    update generator
+```
+
+Both networks use Adam with `betas=(0.0, 0.9)` — zero momentum is standard for WGAN-GP because momentum can cause the critic to overshoot and oscillate. Learning rates warm up linearly from 0 over 500 steps.
+
+---
 
 ## Project Structure
 
@@ -60,26 +120,34 @@ This encourages the gradient norm to be exactly 1 everywhere along the interpola
 .
 ├── code/
 │   ├── model.py        # Generator and Discriminator architectures
-│   ├── train.py        # Training loop with WGAN-GP loss
-│   ├── utils.py        # Hyperparameters and configuration
-│   ├── data_prep.py    # Dataset loading and preprocessing
-│   └── vis_outs.py     # Generate and display samples from a trained model
-├── samples/            # Sample generated faces
-├── data/               # Training images (not tracked)
-└── checkpoints/        # Saved model weights (not tracked)
+│   ├── train.py        # WGAN-GP training loop, gradient penalty, validation
+│   ├── utils.py        # All hyperparameters and paths
+│   ├── data_prep.py    # Dataset class, transforms, train/val split
+│   └── vis_outs.py     # Load checkpoint and display generated faces
+├── docs/
+│   └── TRAINING.md     # Detailed training and checkpointing guide
+├── data/               # Face images — not tracked
+├── checkpoints/        # Model weights — not tracked
+├── samples/            # Sample outputs
+├── requirements.txt
+└── README.md
 ```
 
-## Quick Start
+---
 
-### Install dependencies
+## Getting Started
 
 ```bash
-pip install torch torchvision matplotlib tqdm dropblock
+git clone https://github.com/franciszekparma/wgan-gp-faces.git
+cd wgan-gp-faces
+pip install -r requirements.txt
 ```
+
+**Dependencies:** `torch`, `torchvision`, `numpy`, `matplotlib`, `Pillow`, `tqdm`, `dropblock`
 
 ### Prepare data
 
-Place your face images (`.jpg`, `.png`, `.jpeg`) in the `data/` directory. Images are resized to 128x128 and normalized to [-1, 1].
+Drop face images (`.jpg`, `.png`, `.jpeg`) into `data/`. They'll be resized to 128x128 and normalized to [-1, 1] automatically.
 
 ### Train
 
@@ -87,55 +155,85 @@ Place your face images (`.jpg`, `.png`, `.jpeg`) in the `data/` directory. Image
 python code/train.py
 ```
 
-Checkpoints are saved every 5 epochs to `checkpoints/`. The best model (by validation Wasserstein distance) is saved to `checkpoints/best_model.pth`.
+Checkpoints save every 5 epochs. The best model (lowest validation Wasserstein distance) is saved to `checkpoints/best_model.pth`. To resume from a checkpoint, set `LOAD_STATE = True` in `code/utils.py`.
 
-To resume from a checkpoint, set `LOAD_STATE = True` in `code/utils.py`.
-
-### Generate samples
+### Generate faces
 
 ```bash
 python code/vis_outs.py
 ```
 
-Generates and displays 32 face images from the best saved checkpoint.
-
-## Training Details
-
-- **WGAN-GP loss**: The critic maximizes `E[D(real)] - E[D(fake)]` while the generator minimizes `-E[D(fake)]`. The gradient penalty is added to the critic loss.
-- **N_CRITIC = 3**: The critic trains 3 times per generator step. The critic needs to provide a good Wasserstein distance estimate before the generator updates — training them equally would leave the critic too weak to guide the generator.
-- **Separate learning rates**: `LR_D = 2e-4`, `LR_G = 1e-4`. The higher critic LR helps it stay ahead of the generator.
-- **Adam optimizer**: `betas = (0.0, 0.9)`. Beta1=0 (no momentum) is standard for WGAN-GP — momentum can cause the critic to overshoot and oscillate.
-- **Linear warmup**: LR ramps linearly from 0 to target over 500 steps, avoiding early instability.
-- **Gradient clipping**: `max_norm = 10` for both networks as a safety net against gradient spikes.
-- **Weight initialization**: `N(0, 0.02)` for all weight matrices; zeros for biases; ones/zeros for norm layers.
+---
 
 ## Hyperparameters
 
-| Parameter | Value |
+Everything lives in [`code/utils.py`](code/utils.py).
+
+**Training**
+| | |
 |---|---|
-| Latent dim | 128 |
-| Image size | 128x128 |
 | Batch size | 256 |
 | Epochs | 1024 |
-| LR (Generator) | 1e-4 |
-| LR (Discriminator) | 2e-4 |
+| Critic steps per generator step | 3 |
+| LR (generator) | 1e-4 |
+| LR (critic) | 2e-4 |
 | Adam betas | (0.0, 0.9) |
-| Weight decay | 0.0 |
-| N_CRITIC | 3 |
 | GP lambda | 10 |
-| Gradient clip max norm | 10.0 |
+| Gradient clip | 10.0 |
 | Warmup steps | 500 |
-| G max channels | 512 |
-| G residual blocks per layer | 5 |
-| D conv layers | 4 |
-| D residual blocks per conv layer | 4 |
-| D MLP layers | 4 |
-| D initial channels | 64 |
-| DropBlock (prob, size) | (0.1, 2) |
-| MLP dropout | 0.1 |
 | Train/val split | 90/10 |
-| Init std | 0.02 |
+| Weight init | N(0, 0.02) |
+
+**Generator**
+| | |
+|---|---|
+| Latent dim | 128 |
+| Max channels | 512 |
+| Residual blocks per stage | 5 |
+
+**Critic**
+| | |
+|---|---|
+| Conv stages | 4 |
+| Residual blocks per conv stage | 4 |
+| Initial channels | 64 |
+| MLP layers | 4 |
+| DropBlock (prob, size) | (0.1, 2) |
+| MLP dropout | 0.1 / 0.2 (first layer) |
+
+**Hardware:** Trained on an NVIDIA RTX 5090 rented from RunPod.
+
+---
+
+## Limitations
+
+- **128x128 only** — no progressive growing, resolution is fixed at architecture level
+- **Unconditional** — no control over generated attributes
+- **No FID metric** — quality tracked only via Wasserstein distance
+- **3x critic overhead** — three forward/backward passes per generator step
+- **No truncation trick** — can't trade diversity for quality at inference time
+
+---
+
+## Future Work
+
+- Progressive growing or patch-based discriminator for higher resolutions
+- FID and IS metrics for proper quality evaluation
+- Exponential moving average of generator weights for smoother outputs
+- Conditional generation via class labels or CLIP embeddings
+- Spectral normalization as a lighter alternative to gradient penalty
+
+---
+
+## References
+
+- Goodfellow et al. (2014). [Generative Adversarial Nets](https://arxiv.org/abs/1406.2661)
+- Arjovsky et al. (2017). [Wasserstein GAN](https://arxiv.org/abs/1701.07875)
+- Gulrajani et al. (2017). [Improved Training of Wasserstein GANs](https://arxiv.org/abs/1704.00028)
+- Ghiasi et al. (2018). [DropBlock: A Regularization Method for Convolutional Networks](https://arxiv.org/abs/1810.12890)
+
+---
 
 ## License
 
-MIT
+MIT &copy; franciszekparma
