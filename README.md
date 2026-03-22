@@ -203,27 +203,12 @@ Everything lives in [`code/utils.py`](code/utils.py).
 | DropBlock (prob, size) | (0.1, 2) |
 | MLP dropout | 0.1 / 0.2 (first layer) |
 
-**Hardware:** Trained on an NVIDIA RTX 5090 rented from RunPod.
-
 ---
 
-## Limitations
-
-- **128x128 only** — no progressive growing, resolution is fixed at architecture level
-- **Unconditional** — no control over generated attributes
-- **No FID metric** — quality tracked only via Wasserstein distance
-- **3x critic overhead** — three forward/backward passes per generator step
-- **No truncation trick** — can't trade diversity for quality at inference time
-
----
-
-## Future Work
-
-- Progressive growing or patch-based discriminator for higher resolutions
-- FID and IS metrics for proper quality evaluation
-- Exponential moving average of generator weights for smoother outputs
-- Conditional generation via class labels or CLIP embeddings
-- Spectral normalization as a lighter alternative to gradient penalty
+## Hardware
+Trained on NVIDIA H100:
+* Total time: 14h
+* Money spend: 50$
 
 ---
 
