@@ -91,7 +91,7 @@ score = discriminator(x_hat)
 grads = torch.autograd.grad(outputs=score, inputs=x_hat, ...)
 norm = grads.view(B, -1).norm(2, dim=1)
 
-GP = lambda_ * ((norm - 1) ** 2).mean()                # penalize deviation from 1
+GP = lambda * ((norm - 1) ** 2).mean()                # penalize deviation from 1
 ```
 
 ### Training Loop
@@ -212,16 +212,6 @@ Everything lives in [`code/utils.py`](code/utils.py).
 - **No FID metric** — quality tracked only via Wasserstein distance
 - **3x critic overhead** — three forward/backward passes per generator step
 - **No truncation trick** — can't trade diversity for quality at inference time
-
----
-
-## Future Work
-
-- Progressive growing or patch-based discriminator for higher resolutions
-- FID and IS metrics for proper quality evaluation
-- Exponential moving average of generator weights for smoother outputs
-- Conditional generation via class labels or CLIP embeddings
-- Spectral normalization as a lighter alternative to gradient penalty
 
 ---
 
