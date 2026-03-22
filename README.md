@@ -2,7 +2,7 @@
 
 A Wasserstein GAN with Gradient Penalty that generates 128x128 face images, built in PyTorch.
 
-Trained on an NVIDIA H100 for ~14 hours (~$45 total compute).
+Trained on an NVIDIA H100 for 14 hours (~$45 total compute).
 
 <p align="center">
   <img src="samples/sample_1.png" width="128" alt="Generated face 1">
