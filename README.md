@@ -201,7 +201,13 @@ Everything lives in [`code/utils.py`](code/utils.py).
 | DropBlock (prob, size) | (0.1, 2) |
 | MLP dropout | 0.1 / 0.2 (first layer) |
 
-**Hardware:** Trained on an NVIDIA RTX 5090 rented from RunPod.
+---
+
+## Hardware
+
+Trained on an rented H100.
+* Total time: 14h
+* Money spend: 45$  
 
 ---
 
