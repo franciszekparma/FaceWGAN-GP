@@ -205,16 +205,6 @@ Everything lives in [`code/utils.py`](code/utils.py).
 
 ---
 
-## Limitations
-
-- **128x128 only** — no progressive growing, resolution is fixed at architecture level
-- **Unconditional** — no control over generated attributes
-- **No FID metric** — quality tracked only via Wasserstein distance
-- **3x critic overhead** — three forward/backward passes per generator step
-- **No truncation trick** — can't trade diversity for quality at inference time
-
----
-
 ## References
 
 - Goodfellow et al. (2014). [Generative Adversarial Nets](https://arxiv.org/abs/1406.2661)
