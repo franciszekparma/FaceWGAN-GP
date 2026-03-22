@@ -5,7 +5,7 @@ A from-scratch PyTorch implementation of a Wasserstein GAN with Gradient Penalty
 <p align="center">
   <img src="samples/sample_1.png" width="128" />
   <img src="samples/sample_2.png" width="128" />
-  <img src="samples/sample_3.png" width="128" />
+  <img src="samples/Figure_5.png" width="128" />
   <img src="samples/sample_4.png" width="128" />
   <img src="samples/sample_5.png" width="128" />
 </p>
